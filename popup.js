@@ -1,8 +1,9 @@
 document.getElementById("merge").addEventListener("click", async () => {
+  const status = document.getElementById("status");
   const windows = await chrome.windows.getAll({ populate: true });
 
   if (windows.length <= 1) {
-    document.getElementById("status").textContent = "Nothing to merge.";
+    status.textContent = "Nothing to merge.";
     return;
   }
 
@@ -13,5 +14,5 @@ document.getElementById("merge").addEventListener("click", async () => {
     await chrome.tabs.move(tabIds, { windowId: target.id, index: -1 });
   }
 
-  document.getElementById("status").textContent = `Merged ${windows.length} windows!`;
+  status.textContent = `${windows.length} windows consolidated.`;
 });
