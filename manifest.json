@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Merger",
+  "version": "1.0",
+  "description": "Merge all Chrome windows into one",
+  "permissions": ["tabs", "windows"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Merge All Tabs"
+  }
+}
