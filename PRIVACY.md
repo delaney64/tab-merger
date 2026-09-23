@@ -1,6 +1,6 @@
 # Privacy Policy — Tab Merger
 
-**Last updated: May 2026**
+**Last updated: September 2026**
 
 ## Overview
 
@@ -21,6 +21,7 @@ Tab Merger requests the following Chrome permissions:
 
 - **tabs** — Required to read and move tabs between windows during the merge operation.
 - **windows** — Required to get all open Chrome windows and consolidate them into one.
+- **tabGroups** — Required to read tab group names and move groups as a unit so they stay intact and can be sorted.
 
 These permissions are used exclusively within your browser. No data leaves your device.
 

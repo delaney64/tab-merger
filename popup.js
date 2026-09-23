@@ -1,20 +1,35 @@
+const NO_GROUP = chrome.tabGroups.TAB_GROUP_ID_NONE;
+
+function hostname(url) {
+  try { return new URL(url).hostname; } catch { return ""; }
+}
+
 function sortTabs(tabs, method) {
   switch (method) {
     case "domain":
-      return [...tabs].sort((a, b) => {
-        const domainA = new URL(a.url).hostname;
-        const domainB = new URL(b.url).hostname;
-        return domainA.localeCompare(domainB);
-      });
+      return [...tabs].sort((a, b) => hostname(a.url).localeCompare(hostname(b.url)));
     case "title":
       return [...tabs].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
     case "recent":
       return [...tabs].sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
-    case "pinned":
-      return [...tabs].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
     default:
       return tabs;
   }
+}
+
+// Named groups A-Z first, then unnamed groups in their current order
+function sortGroups(groups, firstIndex) {
+  return [...groups].sort((a, b) => {
+    const titleA = (a.title || "").trim();
+    const titleB = (b.title || "").trim();
+    if (titleA && !titleB) return -1;
+    if (!titleA && titleB) return 1;
+    if (titleA && titleB) {
+      const byName = titleA.localeCompare(titleB, undefined, { sensitivity: "base", numeric: true });
+      if (byName !== 0) return byName;
+    }
+    return firstIndex[a.id] - firstIndex[b.id];
+  });
 }
 
 document.getElementById("merge").addEventListener("click", async () => {
@@ -22,29 +37,58 @@ document.getElementById("merge").addEventListener("click", async () => {
   const sortMethod = document.getElementById("sortOrder").value;
 
   const windows = await chrome.windows.getAll({ populate: true });
+  const [target, ...rest] = windows;
 
-  if (windows.length <= 1 && sortMethod === "none") {
+  // Move groups as whole units so they stay intact, then the loose tabs
+  for (const win of rest) {
+    const groups = await chrome.tabGroups.query({ windowId: win.id });
+    for (const group of groups) {
+      await chrome.tabGroups.move(group.id, { windowId: target.id, index: -1 });
+    }
+    const looseIds = win.tabs.filter(t => t.groupId === NO_GROUP).map(t => t.id);
+    if (looseIds.length) {
+      await chrome.tabs.move(looseIds, { windowId: target.id, index: -1 });
+    }
+  }
+
+  const allTabs = await chrome.tabs.query({ windowId: target.id });
+  const groups = await chrome.tabGroups.query({ windowId: target.id });
+
+  if (windows.length <= 1 && sortMethod === "none" && groups.length === 0) {
     status.textContent = "Nothing to merge.";
     return;
   }
 
-  const [target, ...rest] = windows;
+  // Pinned tabs stay put; groups line up right after them
+  const firstIndex = {};
+  for (const tab of allTabs) {
+    if (tab.groupId !== NO_GROUP && !(tab.groupId in firstIndex)) {
+      firstIndex[tab.groupId] = tab.index;
+    }
+  }
+  let cursor = allTabs.filter(t => t.pinned).length;
 
-  // Collect all tabs from other windows and move them
-  for (const win of rest) {
-    const tabIds = win.tabs.map(t => t.id);
-    await chrome.tabs.move(tabIds, { windowId: target.id, index: -1 });
+  for (const group of sortGroups(groups, firstIndex)) {
+    await chrome.tabGroups.move(group.id, { index: cursor });
+    const groupTabs = allTabs.filter(t => t.groupId === group.id);
+
+    if (sortMethod !== "none") {
+      const sorted = sortTabs(groupTabs, sortMethod);
+      const lastIndex = cursor + groupTabs.length - 1;
+      for (const tab of sorted) {
+        await chrome.tabs.move(tab.id, { index: lastIndex });
+        // Re-assert membership in case the move landed on the group edge
+        await chrome.tabs.group({ groupId: group.id, tabIds: tab.id });
+      }
+    }
+    cursor += groupTabs.length;
   }
 
-  // If sorting is requested, re-sort all tabs in the target window
+  // Loose tabs follow the groups in the selected order
   if (sortMethod !== "none") {
-    const allTabs = await chrome.tabs.query({ windowId: target.id });
-    const safeTabs = allTabs.filter(t => {
-      try { new URL(t.url); return true; } catch { return false; }
-    });
-    const sorted = sortTabs(safeTabs, sortMethod);
-    for (let i = 0; i < sorted.length; i++) {
-      await chrome.tabs.move(sorted[i].id, { windowId: target.id, index: i });
+    const loose = allTabs.filter(t => !t.pinned && t.groupId === NO_GROUP);
+    for (const tab of sortTabs(loose, sortMethod)) {
+      await chrome.tabs.move(tab.id, { index: -1 });
     }
   }
 
@@ -52,9 +96,12 @@ document.getElementById("merge").addEventListener("click", async () => {
     none: "Tabs consolidated.",
     domain: "Sorted by domain.",
     title: "Sorted A–Z.",
-    recent: "Sorted by recent.",
-    pinned: "Pinned tabs first."
+    recent: "Sorted by recent."
   }[sortMethod];
 
-  status.textContent = `${windows.length > 1 ? windows.length + " windows merged. " : ""}${label}`;
+  const parts = [];
+  if (windows.length > 1) parts.push(`${windows.length} windows merged.`);
+  if (groups.length) parts.push(`${groups.length} group${groups.length > 1 ? "s" : ""} first.`);
+  parts.push(label);
+  status.textContent = parts.join(" ");
 });
